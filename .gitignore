@@ -1,0 +1,14 @@
+# OS
+Thumbs.db
+.DS_Store
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# PowerShell build artifacts (none by default)
+
+# Git
+.git/
+
