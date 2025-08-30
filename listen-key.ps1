@@ -8,6 +8,7 @@ param(
   [int]$ThresholdPct = 10,
   [int]$HoldMs = 150,
   [switch]$KeyIndicator,
+  [switch]$UseSpacebar,
   [switch]$Scope,
   [int]$ScopeHeight = 16,
   [int]$PeakHalfLifeMs = 80,
@@ -302,6 +303,15 @@ try {
   if ($_.FullyQualifiedErrorId -ne 'TYPE_ALREADY_EXISTS,Microsoft.PowerShell.Commands.AddTypeCommand') { throw }
 }
 
+# Optional: keyboard polling for spacebar mode
+if ($UseSpacebar) {
+  $kb = @"
+using System.Runtime.InteropServices;
+public static class KeyPoll { [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vkey); }
+"@
+  try { Add-Type -TypeDefinition $kb -ErrorAction Stop } catch { if ($_.FullyQualifiedErrorId -ne 'TYPE_ALREADY_EXISTS,Microsoft.PowerShell.Commands.AddTypeCommand') { throw } }
+}
+
 function Get-AudioInputDevices {
   $count = [WaveInCaptureV4]::GetDeviceCount()
   0..($count-1) | ForEach-Object {
@@ -325,6 +335,7 @@ function Start-LevelMeter {
     [int]$ThresholdPct = 10,
     [int]$HoldMs = 150,
     [bool]$KeyIndicator = $false,
+    [bool]$UseSpacebar = $false,
     [bool]$Scope = $false,
     [int]$ScopeHeight = 16,
     [int]$PeakHalfLifeMs = 80,
@@ -333,7 +344,10 @@ function Start-LevelMeter {
     ,[int]$Wpm = 20
   )
 
-  $capture = New-Object WaveInCaptureV4($DeviceId, $SampleRate, $Bits, $Channels, $UpdatesPerSec, $EdgeThresholdPct, $RefractoryMs)
+  $capture = $null
+  if (-not $UseSpacebar) {
+    $capture = New-Object WaveInCaptureV4($DeviceId, $SampleRate, $Bits, $Channels, $UpdatesPerSec, $EdgeThresholdPct, $RefractoryMs)
+  }
   $stopRequested = $false
   $origCursorVisible = $Host.UI.RawUI.CursorSize
   $Host.UI.RawUI.CursorSize = 0
@@ -393,7 +407,15 @@ function Start-LevelMeter {
 
     while (-not $stopRequested) {
       $peak = 0.0; $rms = 0.0
-      $capture.GetLevels([ref]$peak, [ref]$rms)
+      $downNow = $false
+      if ($UseSpacebar) {
+        # VK_SPACE = 0x20
+        $downNow = (([KeyPoll]::GetAsyncKeyState(0x20) -band 0x8000) -ne 0)
+        if ($downNow) { $peak = 1.0; $rms = 1.0 } else { $peak = 0.0; $rms = 0.0 }
+      } else {
+        $capture.GetLevels([ref]$peak, [ref]$rms)
+        $capture.GetKey([ref]$downNow)
+      }
 
       $instant = [Math]::Min(1.0, $peak)
       $display = [Math]::Max($instant, $display * $releaseFactor)
@@ -404,8 +426,7 @@ function Start-LevelMeter {
       $text = "Level: ".PadRight(8) + "|" + $barStr + "| " + $pct.ToString().PadLeft(3) + "%"
 
       if ($KeyIndicator) {
-        $down = $false; $capture.GetKey([ref]$down)
-        $keyTxt = if ($down) { 'DOWN' } else { 'UP  ' }
+        $keyTxt = if ($downNow) { 'DOWN' } else { 'UP  ' }
         $text += "  KEY: " + $keyTxt + "  (" + ([int]([Math]::Round($rms*100))).ToString().PadLeft(3) + "% rms)"
       }
 
@@ -446,7 +467,7 @@ function Start-LevelMeter {
           $half = [int][Math]::Round($scopeDisp * ($h - 1) / 2.0)
           if ($half -lt 0) { $half = 0 } elseif ($half -ge $h) { $half = $h - 1 }
           for ($yy = $mid - $half; $yy -le $mid + $half; $yy++) { if ($yy -ge 0 -and $yy -lt $h) { $grid[$yy][$w-1] = '*' } }
-        } else {
+        } elseif (-not $UseSpacebar) {
           # Wave style: plot mirrored point from most recent sample, DC-removed
           $points = New-Object 'System.Int16[]' ($w)
           $n = $capture.CopyRecent($points)
@@ -482,7 +503,7 @@ function Start-LevelMeter {
         else { $text = $text.PadRight($maxLine, ' ') }
         Write-Host $text
         # Morse decoded line
-        $downNow = $false; $capture.GetKey([ref]$downNow)
+        # Use the key state computed earlier in this loop
         $now = Get-Date
         if ($downNow -ne $m_prevDown) {
           $dt = ($now - $m_lastChange).TotalMilliseconds
@@ -521,13 +542,17 @@ function Start-LevelMeter {
     }
   }
   finally {
-    $capture.Dispose()
+    if ($capture -ne $null) { $capture.Dispose() }
     [Console]::TreatControlCAsInput = $false
     $Host.UI.RawUI.CursorSize = $origCursorVisible
     Write-Host "`nStopped."
   }
 }
 
-$devDesc = if ($DeviceId -ge 0) { [WaveInCaptureV4]::GetDeviceName($DeviceId) } else { 'Default (WAVE_MAPPER)' }
-Write-Host ("Listening on microphone: " + $devDesc + " (DeviceId=" + $DeviceId + "). Press Ctrl+C to stop.") -ForegroundColor Cyan
-Start-LevelMeter -DeviceId $DeviceId -SampleRate $SampleRate -Bits $Bits -Channels $Channels -UpdatesPerSec $UpdatesPerSec -ThresholdPct $ThresholdPct -HoldMs $HoldMs -KeyIndicator:$KeyIndicator -Scope:$Scope -ScopeHeight $ScopeHeight -PeakHalfLifeMs $PeakHalfLifeMs -Wpm $Wpm
+if ($UseSpacebar) {
+  Write-Host "Keyboard mode: using Spacebar as key (Ctrl+C to stop)." -ForegroundColor Cyan
+} else {
+  $devDesc = if ($DeviceId -ge 0) { [WaveInCaptureV4]::GetDeviceName($DeviceId) } else { 'Default (WAVE_MAPPER)' }
+  Write-Host ("Listening on microphone: " + $devDesc + " (DeviceId=" + $DeviceId + "). Press Ctrl+C to stop.") -ForegroundColor Cyan
+}
+Start-LevelMeter -DeviceId $DeviceId -SampleRate $SampleRate -Bits $Bits -Channels $Channels -UpdatesPerSec $UpdatesPerSec -ThresholdPct $ThresholdPct -HoldMs $HoldMs -KeyIndicator:$KeyIndicator -UseSpacebar:$UseSpacebar -Scope:$Scope -ScopeHeight $ScopeHeight -PeakHalfLifeMs $PeakHalfLifeMs -Wpm $Wpm

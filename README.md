@@ -1,6 +1,8 @@
 Morse Key Reader (PowerShell)
 ================================
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A Windows PowerShell script that reads a telegraph key (or microphone input) via the PC audio input, renders a live console scope, and decodes Morse code in real time.
 
 Features
@@ -19,6 +21,8 @@ Quick Start
   `./listen-key.ps1 -Scope -KeyIndicator`
 - Pick a specific device (e.g., 0):
   `./listen-key.ps1 -DeviceId 0 -Scope -KeyIndicator`
+ - Keyboard mode (no audio hardware):
+  `./listen-key.ps1 -UseSpacebar -Scope -KeyIndicator`
 
 Common Options
 - `-Scope`: Enable scrolling history scope
@@ -27,6 +31,7 @@ Common Options
 - `-ScopeStyle bars|wave`: Bars (default) or point waveform
 - `-PeakHalfLifeMs <int>`: Visual level release half-life (default 80ms)
 - `-KeyIndicator`: Show debounced key state (UP/DOWN)
+- `-UseSpacebar`: Use the keyboard spacebar as the key (no audio capture)
 - `-Wpm <int>`: Morse speed (default 20; dot = 1200/Wpm ms)
 - Edge detector tuning:
   - `-EdgeThresholdPct <int>`: Pulse threshold (default 12)
